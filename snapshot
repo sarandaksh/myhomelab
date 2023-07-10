@@ -1,0 +1,47 @@
+#!/bin/bash
+export AWS_PROFILE=myprofile
+
+# Specify the desired tag key and value
+tag_key="resource_creator"
+tag_value="your_tag_value"
+
+# Calculate the timestamp for 10 days ago
+ten_days_ago=$(date -u --date="-10 days" +"%Y-%m-%dT%H:%M:%SZ")
+
+# Retrieve the list of snapshots with the specified tag value created within the last 10 days
+#snapshot_ids=$(aws ec2 describe-snapshots --filters "Name=tag:${tag_key},Values=${tag_value}" "Name=startTime,Values=${ten_days_ago}" --query "Snapshots[].SnapshotId" --output text)
+snapshot_ids=$(aws ec2 describe-snapshots --filters "Name=tag:${tag_key},Values=${tag_value}" --query "Snapshots[?StartTime<=\`${ten_days_ago}\`].SnapshotId" --output text)
+# Retrieve the list of volumes
+volume_ids=$(aws ec2 describe-volumes --query "Volumes[].VolumeId" --output text)
+
+# Identify unassigned snapshots
+unassigned_snapshots=()
+
+for snapshot_id in $snapshot_ids; do
+  assigned=false
+
+  for volume_id in $volume_ids; do
+    attachment=$(aws ec2 describe-volumes --volume-ids $volume_id --query "Volumes[].Attachments[?SnapshotId=='${snapshot_id}'].{SnapshotId:SnapshotId}" --output text)
+
+    if [ -n "$attachment" ]; then
+      assigned=true
+      break
+    fi
+  done
+
+  if [ "$assigned" = false ]; then
+    unassigned_snapshots+=($snapshot_id)
+  fi
+done
+
+# Print the list of unassigned snapshots
+#echo "Unassigned Snapshots:"
+#for snapshot_id in "${unassigned_snapshots[@]}"; do
+#  echo $snapshot_id
+
+
+# Delete unassigned snapshots
+for snapshot_id in "${unassigned_snapshots[@]}"; do
+  echo "Deleting snapshot: $snapshot_id"
+  aws ec2 delete-snapshot --snapshot-id $snapshot_id
+done
